@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { AudioLines, ArrowDownUp, ArrowLeft, ArrowRight, Check, ChevronDown, CircleHelp, Disc3, Heart, History, Home, Library, Link2, ListMusic, LoaderCircle, LogIn, LogOut, MoreHorizontal, Music2, Pause, Play, Plus, RefreshCw, Repeat2, Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, X } from "lucide-react";
+import { AudioLines, ArrowDownUp, ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Disc3, Heart, History, Home, Library, Link2, ListMusic, LoaderCircle, LogIn, LogOut, MoreHorizontal, Music2, Pause, Play, Plus, RefreshCw, Repeat2, Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, X } from "lucide-react";
 import type { HistoryItem, Playlist, Sound, User } from "@/types";
 import { authApi } from "@/lib/api/auth";
 import { favoritesApi } from "@/lib/api/favorites";
@@ -20,6 +20,10 @@ type AuthMode = "login" | "register";
 
 function Cover({ sound, className = "" }: { sound?: Sound | null; className?: string }) {
   return <div className={`cover ${className}`}>{sound?.thumbnail_url ? <img src={sound.thumbnail_url} alt="" /> : <AudioLines size={26} strokeWidth={1.5} />}</div>;
+}
+
+function BrandMark() {
+  return <span className="brand-mark" aria-hidden="true"><Music2 className="brand-mark-note" size={18} strokeWidth={2.3} /><span className="brand-mark-wave"><i /><i /><i /><i /></span></span>;
 }
 
 function PlaylistCover({ playlist, className = "" }: { playlist: Playlist; className?: string }) {
@@ -322,7 +326,7 @@ export default function HomePage() {
     { id: "playlists" as const, label: "Playlists", icon: ListMusic },
   ];
 
-  function navigation() { return nav.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${section === id ? "active" : ""}`} onClick={() => { setSection(id); setActivePlaylist(null); if (id === "library") setFavoritesOnly(false); }}><Icon size={17} /><span>{label}</span>{id === "playlists" && playlists.length > 0 && <span style={{ marginLeft: "auto", fontSize: 10, opacity: .7 }}>{playlists.length}</span>}</button>); }
+  function navigation() { return nav.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${section === id ? "active" : ""}`} onClick={() => { setSection(id); setActivePlaylist(null); if (id === "library") setFavoritesOnly(false); }}><Icon size={17} /><span>{label}</span>{id === "playlists" && playlists.length > 0 && <span className="nav-count">{playlists.length}</span>}</button>); }
 
   function openHistory() { setSection("history"); setFavoritesOnly(false); setActivePlaylist(null); }
 
@@ -343,21 +347,21 @@ export default function HomePage() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <a className="brand" href="#"><span className="brand-mark"><AudioLines size={19} /></span><span className="brand-word">Vorha</span><span className="brand-note">your sound space</span></a>
+      <a className="brand" href="#"><BrandMark /><span className="brand-copy"><span className="brand-word">Vorha</span><span className="brand-note">Your sound space</span></span></a>
       <div className="nav-label">Workspace</div>{navigation()}
       <div className="sidebar-bottom">
         <div className="nav-label">Your space</div>
         <button className="nav-item" onClick={() => { if (!user) setAuthMode("login"); else { setSection("library"); setFavoritesOnly(true); setActivePlaylist(null); } }}><Heart size={17} /><span>Favorites</span></button>
         <button className={`nav-item ${section === "history" ? "active" : ""}`} onClick={openHistory}><History size={17} /><span>Recently played</span>{history.length > 0 && <span style={{ marginLeft: "auto", fontSize: 10, opacity: .7 }}>{history.length}</span>}</button>
-        <div className="sidebar-note"><div style={{ display: "flex", alignItems: "center", gap: 7, color: "#111111", fontSize: 11, fontWeight: 700 }}><CircleHelp size={14} /> Audio-only playback</div><p>Paste a TikTok link and Vorha plays its soundtrack in the background, with the picture hidden.</p></div>
-        {user ? <button className="nav-item" onClick={() => void signOut()}><LogOut size={17} /><span>Sign out</span></button> : <button className="nav-item" onClick={() => setAuthMode("login")}><LogIn size={17} /><span>Sign in</span></button>}
+        <div className="sidebar-note"><div style={{ display: "flex", alignItems: "center", gap: 7, color: "#111111", fontSize: 11, fontWeight: 700 }}><ChevronRight size={14} /> Audio-only playback</div><p>Paste a TikTok link and Vorha plays its soundtrack in the background, with the picture hidden.</p></div>
+        {user && <button className="nav-item sidebar-signout" onClick={() => void signOut()}><LogOut size={17} /><span>Sign out</span></button>}
       </div>
     </aside>
     <main className="main-area">
       <header className="topbar">
-        <div className="mobile-brand"><span className="brand-mark"><AudioLines size={17} /></span><span className="brand-word">Vorha</span></div>
+        <div className="mobile-brand"><BrandMark /><span className="brand-copy"><span className="brand-word">Vorha</span><span className="brand-note">Your sound space</span></span></div>
         <div className="topbar-left"><span>My space</span><ArrowRight size={13} /><strong>{section === "discover" ? "Discover" : section === "library" ? "My library" : section === "history" ? "Recently played" : active?.name ?? "Playlists"}</strong></div>
-        <div className="topbar-actions">{user ? <><span style={{ color: "#777383", fontSize: 11 }}>Good to see you, {user.username}</span><span className="avatar">{user.username.slice(0, 1).toUpperCase()}</span><button className="button-ghost" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}><LogOut size={16} /></button></> : <button className="button-secondary" onClick={() => setAuthMode("login")}><LogIn size={14} /> Sign in</button>}</div>
+        <div className="topbar-actions">{user ? <><span style={{ color: "#777383", fontSize: 11 }}>Good to see you, {user.username}</span><span className="avatar">{user.username.slice(0, 1).toUpperCase()}</span></> : <button className="button-secondary" onClick={() => setAuthMode("login")}><LogIn size={14} /> Sign in</button>}</div>
       </header>
 
       <div className="page-content">
@@ -371,7 +375,6 @@ export default function HomePage() {
             <div className="search-row"><Link2 className="icon" size={17} /><input id="tiktok-url" type="url" inputMode="url" autoComplete="url" placeholder="https://www.tiktok.com/@creator/video/..." value={url} onChange={(event) => { setUrl(event.target.value); if (urlError) setUrlError(""); }} aria-invalid={Boolean(urlError)} aria-describedby={urlError ? "url-error" : undefined} /><button className="button-primary" type="submit" disabled={busy}>{busy ? <><LoaderCircle size={15} className="spin" /> Preparing audio…</> : <><Sparkles size={15} /> Find sound</>}
 </button></div>
             {urlError && <div className="form-error" id="url-error" role="alert">{urlError}</div>}
-            <div className="hint"><CircleHelp size={13} /> Vorha pulls the soundtrack from the link and plays it in the background. The first lookup can take a few seconds while the audio is prepared.</div>
           </form>
 
           {result && <section className="result-card" aria-live="polite">
@@ -393,7 +396,7 @@ export default function HomePage() {
         {section === "library" && <>
           <div className="eyebrow"><span className="eyebrow-dot" /> Your collection</div><div className="section-heading" style={{ marginTop: 13 }}><div><h1 className="hero-title font-display" style={{ fontSize: 34, margin: 0 }}>{favoritesOnly ? "Favorites" : "My library"}</h1><p className="section-desc" style={{ marginTop: 9 }}>Everything you’ve saved or listened to.</p></div><span className="status-chip">{favoritesOnly ? favorites.length : libraryTotal} {favoritesOnly ? favorites.length === 1 ? "sound" : "sounds" : libraryTotal === 1 ? "sound" : "sounds"}</span></div>
           {user && <div className="library-search"><Search size={15} color="#777383" /><input placeholder="Search titles and creators" value={search} onChange={(event) => { setSearch(event.target.value); setLibraryPage(1); }} /></div>}
-          {!user ? <div className="empty-state"><div className="empty-icon"><Library size={21} /></div><h3>Your library is yours to shape</h3><p>Sign in to save favorite sounds, build playlists, and find them later.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : visibleSounds.length ? <><div className="sound-grid">{visibleSounds.map((sound) => <SoundCard key={sound.id} sound={sound} onPlay={() => void playOne(sound, visibleSounds)} onFavorite={() => void toggleFavorite(sound)} favorite={favorites.some((item) => item.id === sound.id)} />)}</div>{!favoritesOnly && librarySounds.length < libraryTotal && <div style={{ textAlign: "center", marginTop: 22 }}><button className="button-secondary" onClick={() => setLibraryPage((page) => page + 1)}>Load more sounds</button></div>}</> : <div className="empty-state"><div className="empty-icon"><Music2 size={21} /></div><h3>{favoritesOnly ? "No favorites yet" : "No sounds saved yet"}</h3><p>Find a sound you love and save it here. Your personal library will be waiting.</p><button className="button-secondary" style={{ marginTop: 17 }} onClick={() => { setSection("discover"); setFavoritesOnly(false); }}>Find a sound <ArrowRight size={13} /></button></div>}
+          {!user ? <div className="empty-state"><div className="empty-icon"><Library size={21} /></div><h3>Your library is yours to shape</h3><p>Sign in to save favorite sounds, build playlists, and find them later.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : visibleSounds.length ? <><div className="sound-grid library-grid">{visibleSounds.map((sound) => <SoundCard key={sound.id} sound={sound} compact onPlay={() => void playOne(sound, visibleSounds)} onFavorite={() => void toggleFavorite(sound)} favorite={favorites.some((item) => item.id === sound.id)} />)}</div>{!favoritesOnly && librarySounds.length < libraryTotal && <div style={{ textAlign: "center", marginTop: 22 }}><button className="button-secondary" onClick={() => setLibraryPage((page) => page + 1)}>Load more sounds</button></div>}</> : <div className="empty-state"><div className="empty-icon"><Music2 size={21} /></div><h3>{favoritesOnly ? "No favorites yet" : "No sounds saved yet"}</h3><p>Find a sound you love and save it here. Your personal library will be waiting.</p><button className="button-secondary" style={{ marginTop: 17 }} onClick={() => { setSection("discover"); setFavoritesOnly(false); }}>Find a sound <ArrowRight size={13} /></button></div>}
         </>}
 
         {section === "history" && <>
