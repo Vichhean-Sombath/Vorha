@@ -1,4 +1,6 @@
 from datetime import datetime
+import base64
+import binascii
 
 from pydantic import Field, field_validator
 
@@ -22,6 +24,7 @@ class PlaylistCreate(ORMModel):
 class PlaylistPatch(ORMModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
+    cover_image: str | None = Field(default=None, max_length=900_000)
 
     @field_validator("name")
     @classmethod
@@ -32,6 +35,22 @@ class PlaylistPatch(ORMModel):
         if not name:
             raise ValueError("Playlist name cannot be empty.")
         return name
+
+    @field_validator("cover_image")
+    @classmethod
+    def validate_cover_image(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        prefix = "data:image/jpeg;base64,"
+        if not value.startswith(prefix):
+            raise ValueError("Playlist covers must be JPEG images.")
+        try:
+            image = base64.b64decode(value[len(prefix):], validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("Playlist cover image is invalid.") from error
+        if not image or len(image) > 650_000:
+            raise ValueError("Playlist cover image is too large.")
+        return value
 
 
 class PlaylistSoundRead(ORMModel):
@@ -44,6 +63,7 @@ class PlaylistRead(ORMModel):
     id: int
     name: str
     description: str | None
+    cover_image: str | None
     created_at: datetime
     updated_at: datetime
     items: list[PlaylistSoundRead]

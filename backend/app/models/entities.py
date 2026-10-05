@@ -50,6 +50,7 @@ class Playlist(TimestampMixin, Base):
     user_id: Mapped[int] = mapped_column(ID_TYPE, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_image: Mapped[str | None] = mapped_column(Text, nullable=True)
     user: Mapped[User] = relationship(back_populates="playlists")
     items: Mapped[list["PlaylistSound"]] = relationship(back_populates="playlist", cascade="all, delete-orphan", order_by="PlaylistSound.position")
 

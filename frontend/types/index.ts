@@ -15,5 +15,5 @@ export type Sound = {
   created_at: string;
 };
 export type PlaylistItem = { sound: Sound; position: number; added_at: string };
-export type Playlist = { id: number; name: string; description: string | null; created_at: string; updated_at: string; items: PlaylistItem[] };
+export type Playlist = { id: number; name: string; description: string | null; cover_image: string | null; created_at: string; updated_at: string; items: PlaylistItem[] };
 export type HistoryItem = { sound: Sound; progress_seconds: number; completed: boolean; last_played_at: string };

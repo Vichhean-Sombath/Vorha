@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { AudioLines, ArrowDownUp, ArrowLeft, ArrowRight, Check, ChevronDown, CircleHelp, Disc3, Heart, History, Home, Library, Link2, ListMusic, LoaderCircle, LogIn, LogOut, MoreHorizontal, Music2, Pause, Play, Plus, RefreshCw, Repeat2, Search, Shuffle, SkipBack, SkipForward, Sparkles, Trash2, Upload, Volume2, X } from "lucide-react";
+import { AudioLines, ArrowDownUp, ArrowLeft, ArrowRight, Check, ChevronDown, CircleHelp, Disc3, Heart, History, Home, Library, Link2, ListMusic, LoaderCircle, LogIn, LogOut, MoreHorizontal, Music2, Pause, Play, Plus, RefreshCw, Repeat2, Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, X } from "lucide-react";
 import type { HistoryItem, Playlist, Sound, User } from "@/types";
 import { authApi } from "@/lib/api/auth";
 import { favoritesApi } from "@/lib/api/favorites";
@@ -10,7 +10,6 @@ import { historyApi } from "@/lib/api/history";
 import { playlistsApi } from "@/lib/api/playlists";
 import { ApiError, resolveMediaUrl } from "@/lib/api/client";
 import { soundsApi } from "@/lib/api/sounds";
-import { createLocalMediaUrl, getLocalMediaType, listLocalAudioSoundIds, removeLocalMedia, saveLocalMedia } from "@/lib/local-audio";
 
 const urlSchema = z.string().url("Enter a valid URL.").refine((value) => {
   try { const parsed = new URL(value); return parsed.protocol === "https:" && !parsed.username && !parsed.password && ["tiktok.com", "www.tiktok.com", "m.tiktok.com", "vm.tiktok.com", "vt.tiktok.com"].includes(parsed.hostname) && (!parsed.port || parsed.port === "443"); } catch { return false; }
@@ -21,6 +20,35 @@ type AuthMode = "login" | "register";
 
 function Cover({ sound, className = "" }: { sound?: Sound | null; className?: string }) {
   return <div className={`cover ${className}`}>{sound?.thumbnail_url ? <img src={sound.thumbnail_url} alt="" /> : <AudioLines size={26} strokeWidth={1.5} />}</div>;
+}
+
+function PlaylistCover({ playlist, className = "" }: { playlist: Playlist; className?: string }) {
+  const initials = playlist.name.trim().split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "V";
+  let hash = 0;
+  for (const character of playlist.name) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  const style = [`#111 0%,#444 55%,#888 100%`, `#333 0%,#666 52%,#aaa 100%`, `#555 0%,#888 55%,#ccc 100%`, `#222 0%,#555 50%,#999 100%`][Math.abs(hash) % 4];
+  return <div className={`playlist-art ${className}`} style={playlist.cover_image ? undefined : { background: `linear-gradient(145deg,${style})` }} aria-label={`${playlist.name} cover`}>
+    {playlist.cover_image ? <img src={playlist.cover_image} alt="" /> : <span>{initials}</span>}
+  </div>;
+}
+
+async function encodePlaylistImage(file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file for the playlist cover.");
+  if (file.size > 20 * 1024 * 1024) throw new Error("Choose an image smaller than 20 MB.");
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = 640;
+  canvas.height = 640;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This browser can’t prepare that image.");
+  const side = Math.min(bitmap.width, bitmap.height);
+  context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 640, 640);
+  bitmap.close();
+  for (const quality of [0.86, 0.76, 0.66, 0.56]) {
+    const data = canvas.toDataURL("image/jpeg", quality);
+    if (data.length < 860_000) return data;
+  }
+  throw new Error("That image is too detailed to use. Choose a smaller image.");
 }
 
 function formatTime(seconds: number) {
@@ -138,16 +166,14 @@ export default function HomePage() {
   const [librarySounds, setLibrarySounds] = useState<Sound[]>([]);
   const [libraryTotal, setLibraryTotal] = useState(0);
   const [libraryPage, setLibraryPage] = useState(1);
-  const [localAudioIds, setLocalAudioIds] = useState<Set<number>>(new Set());
-  const [audioFileError, setAudioFileError] = useState("");
-  const [savingAudio, setSavingAudio] = useState(false);
+  const [audioError, setAudioError] = useState("");
   const [preparingAudio, setPreparingAudio] = useState(false);
-  const audioFileInput = useRef<HTMLInputElement>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [activePlaylist, setActivePlaylist] = useState<number | null>(null);
   const [playlistName, setPlaylistName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
+  const playlistCoverInput = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState("");
   const [nowPlaying, setNowPlaying] = useState<Sound | null>(null);
   const [queue, setQueue] = useState<Sound[]>([]);
@@ -156,11 +182,6 @@ export default function HomePage() {
   const active = playlists.find((playlist) => playlist.id === activePlaylist) ?? null;
   const visibleSounds = favoritesOnly ? favorites.filter((sound) => !search.trim() || `${sound.title ?? ""} ${sound.creator_name ?? ""} ${sound.creator_username ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())) : librarySounds;
   useEffect(() => { void authApi.me().then((current) => { setUser(current); void refresh(current); }).catch(() => undefined); }, []);
-  useEffect(() => {
-    let current = true;
-    void listLocalAudioSoundIds(user?.id ?? null).then((ids) => { if (current) setLocalAudioIds(new Set(ids)); }).catch(() => undefined);
-    return () => { current = false; };
-  }, [user]);
   useEffect(() => { if (!toast) return; const id = window.setTimeout(() => setToast(""), 3400); return () => window.clearTimeout(id); }, [toast]);
   useEffect(() => {
     if (!user) { setLibrarySounds((items) => items.length ? [] : items); setLibraryTotal((total) => total ? 0 : total); return; }
@@ -195,14 +216,8 @@ export default function HomePage() {
     setBusy(true); setResult(null);
     try {
       const analyzed = await soundsApi.analyze(checked.data);
-      setAudioFileError("");
-      if (analyzed.is_playable && analyzed.playback_url) {
-        setResult({ ...analyzed, playback_media_type: "audio" });
-      } else {
-        const localMedia = await createLocalMediaUrl(user?.id ?? null, analyzed.id).catch(() => null);
-        setResult(localMedia ? { ...analyzed, playback_url: localMedia.url, playback_media_type: localMedia.mediaType, is_playable: true } : analyzed);
-        if (localMedia) setLocalAudioIds((ids) => new Set(ids).add(analyzed.id));
-      }
+      setAudioError("");
+      setResult(analyzed.is_playable && analyzed.playback_url ? { ...analyzed, playback_media_type: "audio" } : analyzed);
     }
     catch (error) {
       if (error instanceof ApiError && error.status !== 401) setUrlError(error.message);
@@ -212,44 +227,14 @@ export default function HomePage() {
   }
 
   async function retryAudio(sound: Sound) {
-    setPreparingAudio(true); setAudioFileError("");
+    setPreparingAudio(true); setAudioError("");
     try {
       const updated = await soundsApi.prepareAudio(sound.id);
       setResult({ ...updated, playback_media_type: "audio" });
       setToast("Audio is ready to play.");
     } catch (error) {
-      setAudioFileError(error instanceof Error ? error.message : "Could not prepare audio for this video.");
+      setAudioError(error instanceof Error ? error.message : "Could not prepare audio for this video.");
     } finally { setPreparingAudio(false); }
-  }
-
-  async function attachAudioFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file || !result) return;
-    const mediaType = getLocalMediaType(file);
-    if (!mediaType) { setAudioFileError("Choose an audio file or a saved video file such as MP4 or MOV."); return; }
-    if (file.size > 200 * 1024 * 1024) { setAudioFileError("Media files must be 200 MB or smaller."); return; }
-    setSavingAudio(true); setAudioFileError("");
-    try {
-      await saveLocalMedia(user?.id ?? null, result.id, file, mediaType);
-      const playbackUrl = URL.createObjectURL(file);
-      setResult({ ...result, playback_url: playbackUrl, playback_media_type: mediaType, is_playable: true });
-      setLocalAudioIds((ids) => new Set(ids).add(result.id));
-      setToast(mediaType === "video" ? "Video soundtrack is ready in this browser on this device." : "Audio is ready in this browser on this device.");
-    } catch (error) {
-      setAudioFileError(error instanceof Error ? error.message : "Could not save that audio file in this browser.");
-    } finally { setSavingAudio(false); }
-  }
-
-  async function removeAttachedAudio() {
-    if (!result) return;
-    try {
-      await removeLocalMedia(user?.id ?? null, result.id);
-      setLocalAudioIds((ids) => { const next = new Set(ids); next.delete(result.id); return next; });
-      if (nowPlaying?.id === result.id) { setNowPlaying(null); setQueue([]); }
-      setResult({ ...result, playback_url: null, playback_media_type: undefined, is_playable: false });
-      setToast("Removed this device’s media file from the sound.");
-    } catch (error) { setAudioFileError(error instanceof Error ? error.message : "Could not remove the audio file."); }
   }
 
   async function toggleFavorite(sound: Sound) {
@@ -273,6 +258,25 @@ export default function HomePage() {
     catch (error) { showError(error); }
   }
 
+  async function changePlaylistCover(file: File) {
+    if (!active) return;
+    try {
+      const cover_image = await encodePlaylistImage(file);
+      const updated = await playlistsApi.update(active.id, { cover_image });
+      setPlaylists((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setToast("Playlist cover updated");
+    } catch (error) { showError(error); }
+  }
+
+  async function resetPlaylistCover() {
+    if (!active) return;
+    try {
+      const updated = await playlistsApi.update(active.id, { cover_image: null });
+      setPlaylists((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setToast("Using the title cover");
+    } catch (error) { showError(error); }
+  }
+
   async function deletePlaylist(id: number) {
     if (!window.confirm("Delete this playlist? Its saved sounds will remain in your library.")) return;
     try { await playlistsApi.remove(id); setPlaylists((items) => items.filter((item) => item.id !== id)); setActivePlaylist(null); setToast("Playlist deleted"); }
@@ -287,11 +291,7 @@ export default function HomePage() {
   async function signOut() { try { await authApi.logout(); } finally { setUser(null); setFavorites([]); setPlaylists([]); setHistory([]); setLibrarySounds([]); setLibraryTotal(0); setSection("discover"); setToast("You’re signed out"); } }
 
   async function getPlayableSound(sound: Sound): Promise<Sound | null> {
-    if (sound.is_playable && sound.playback_url) return sound;
-    const localMedia = await createLocalMediaUrl(user?.id ?? null, sound.id).catch(() => null);
-    if (!localMedia) return null;
-    setLocalAudioIds((ids) => new Set(ids).add(sound.id));
-    return { ...sound, playback_url: localMedia.url, playback_media_type: localMedia.mediaType, is_playable: true };
+    return sound.is_playable && sound.playback_url ? sound : null;
   }
 
   async function startQueue(items: Sound[]) {
@@ -378,25 +378,22 @@ export default function HomePage() {
             <Cover sound={result} />
             <div className="sound-main"><div className="sound-topline"><Disc3 size={14} /> Sound details</div><h2 className="sound-title">{result.title || "Untitled sound"}</h2><p className="sound-subtitle">Video by {result.creator_name || (result.creator_username ? `@${result.creator_username}` : "TikTok creator")}</p>
               <div className="sound-meta"><span><Music2 size={12} style={{ verticalAlign: "-2px", marginRight: 5 }} />TikTok video</span><a href={result.source_url} target="_blank" rel="noreferrer" style={{ color: "#777383", textDecoration: "none" }}>Open original <ArrowRight size={11} style={{ verticalAlign: "-1px" }} /></a></div>
-              <input ref={audioFileInput} type="file" accept="audio/*,video/mp4,video/quicktime,video/webm,video/x-m4v,video/3gpp,.mp3,.m4a,.aac,.wav,.ogg,.opus,.flac,.mp4,.m4v,.mov,.webm,.mkv,.3gp" aria-label="Choose an authorized audio or saved video file" style={{ display: "none" }} onChange={(event) => void attachAudioFile(event)} />
-              <div className="sound-actions"><button className="button-primary" disabled={!result.is_playable || !result.playback_url} title={!result.is_playable || !result.playback_url ? "Audio is not ready for this video yet." : "Listen"} onClick={() => void playOne(result, [result])}><Play size={14} fill="currentColor" /> Listen</button>{!result.is_playable && <button className="button-secondary" onClick={() => void retryAudio(result)} disabled={preparingAudio}>{preparingAudio ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />} {preparingAudio ? "Preparing…" : "Retry audio"}</button>}<button className="button-secondary" onClick={() => audioFileInput.current?.click()} disabled={savingAudio}><Upload size={14} /> {savingAudio ? "Saving…" : localAudioIds.has(result.id) ? "Replace file" : "Use a local file"}</button>{localAudioIds.has(result.id) && <button className="button-secondary" onClick={() => void removeAttachedAudio()}><Trash2 size={14} /> Remove file</button>}<button className="button-secondary" onClick={() => void toggleFavorite(result)}><Heart size={14} fill={favorites.some((item) => item.id === result.id) ? "currentColor" : "none"} /> {favorites.some((item) => item.id === result.id) ? "Saved" : "Favorite"}</button><button className="button-secondary" onClick={() => user ? setShowPlaylistPicker(true) : setAuthMode("login")}><Plus size={15} /> Add to playlist</button></div>
-              <p className="section-desc" style={{ marginTop: 8, fontSize: 10 }}>Vorha plays only the soundtrack, with the picture hidden. If a video blocks automated access, use a file you own or are permitted to use — that copy stays in this browser on this device.</p>
-              {audioFileError && <div className="form-error" role="alert">{audioFileError}</div>}
-              {!result.is_playable && <div className="status-chip" style={{ marginTop: 13, width: "fit-content" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#666666" }} /> Audio could not be prepared for this video. Retry, or choose a local file.</div>}
-              {result.is_playable && !localAudioIds.has(result.id) && <div className="status-chip" style={{ marginTop: 13, width: "fit-content" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#666666" }} /> Audio is ready to play in the background.</div>}
-              {localAudioIds.has(result.id) && result.is_playable && <div className="status-chip" style={{ marginTop: 13, width: "fit-content" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#666666" }} /> Your media file is saved in this browser.</div>}
+              <div className={`sound-actions ${result.is_playable ? "is-playable" : "is-unavailable"}`}><button className="button-primary" disabled={!result.is_playable || !result.playback_url} title={!result.is_playable || !result.playback_url ? "Audio is not ready for this video yet." : "Listen"} onClick={() => void playOne(result, [result])}><Play size={14} fill="currentColor" /> Listen</button>{!result.is_playable && <button className="button-secondary" onClick={() => void retryAudio(result)} disabled={preparingAudio}>{preparingAudio ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />} {preparingAudio ? "Preparing…" : "Retry audio"}</button>}<button className="button-secondary" onClick={() => void toggleFavorite(result)}><Heart size={14} fill={favorites.some((item) => item.id === result.id) ? "currentColor" : "none"} /> {favorites.some((item) => item.id === result.id) ? "Saved" : "Favorite"}</button><button className="button-secondary" onClick={() => user ? setShowPlaylistPicker(true) : setAuthMode("login")}><Plus size={15} /> Add to playlist</button></div>
+              {audioError && <div className="form-error" role="alert">{audioError}</div>}
+              {!result.is_playable && <div className="status-chip" style={{ marginTop: 13, width: "fit-content" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#666666" }} /> Audio could not be prepared for this video. Retry to prepare it.</div>}
+              {result.is_playable && <div className="status-chip" style={{ marginTop: 13, width: "fit-content" }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#666666" }} /> Audio is ready to play in the background.</div>}
             </div>
           </section>}
 
           {user && <><div className="section-heading"><div><h2 className="section-title">Recently played</h2><p className="section-desc">Pick up where a sound left off.</p></div><button className="text-link" onClick={openHistory}>View listening history <ArrowRight size={12} style={{ verticalAlign: "-2px" }} /></button></div>
-            {history.length ? <div className="sound-grid recent-grid">{history.slice(0, 3).map((item) => <SoundCard key={item.sound.id} sound={item.sound} compact localAudioAvailable={localAudioIds.has(item.sound.id)} onPlay={() => void playOne(item.sound, history.map((entry) => entry.sound))} onFavorite={() => void toggleFavorite(item.sound)} favorite={favorites.some((sound) => sound.id === item.sound.id)} />)}</div> : <div className="empty-state"><div className="empty-icon"><History size={21} /></div><h3>Your listening trail starts here</h3><p>Sounds you play will find a home here, ready when you want them again.</p></div>}
+            {history.length ? <div className="sound-grid recent-grid">{history.slice(0, 3).map((item) => <SoundCard key={item.sound.id} sound={item.sound} compact onPlay={() => void playOne(item.sound, history.map((entry) => entry.sound))} onFavorite={() => void toggleFavorite(item.sound)} favorite={favorites.some((sound) => sound.id === item.sound.id)} />)}</div> : <div className="empty-state"><div className="empty-icon"><History size={21} /></div><h3>Your listening trail starts here</h3><p>Sounds you play will find a home here, ready when you want them again.</p></div>}
           </>}
         </>}
 
         {section === "library" && <>
           <div className="eyebrow"><span className="eyebrow-dot" /> Your collection</div><div className="section-heading" style={{ marginTop: 13 }}><div><h1 className="hero-title font-display" style={{ fontSize: 34, margin: 0 }}>{favoritesOnly ? "Favorites" : "My library"}</h1><p className="section-desc" style={{ marginTop: 9 }}>Everything you’ve saved or listened to.</p></div><span className="status-chip">{favoritesOnly ? favorites.length : libraryTotal} {favoritesOnly ? favorites.length === 1 ? "sound" : "sounds" : libraryTotal === 1 ? "sound" : "sounds"}</span></div>
           {user && <div className="library-search"><Search size={15} color="#777383" /><input placeholder="Search titles and creators" value={search} onChange={(event) => { setSearch(event.target.value); setLibraryPage(1); }} /></div>}
-          {!user ? <div className="empty-state"><div className="empty-icon"><Library size={21} /></div><h3>Your library is yours to shape</h3><p>Sign in to save favorite sounds, build playlists, and find them later.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : visibleSounds.length ? <><div className="sound-grid">{visibleSounds.map((sound) => <SoundCard key={sound.id} sound={sound} localAudioAvailable={localAudioIds.has(sound.id)} onPlay={() => void playOne(sound, visibleSounds)} onFavorite={() => void toggleFavorite(sound)} favorite={favorites.some((item) => item.id === sound.id)} />)}</div>{!favoritesOnly && librarySounds.length < libraryTotal && <div style={{ textAlign: "center", marginTop: 22 }}><button className="button-secondary" onClick={() => setLibraryPage((page) => page + 1)}>Load more sounds</button></div>}</> : <div className="empty-state"><div className="empty-icon"><Music2 size={21} /></div><h3>{favoritesOnly ? "No favorites yet" : "No sounds saved yet"}</h3><p>Find a sound you love and save it here. Your personal library will be waiting.</p><button className="button-secondary" style={{ marginTop: 17 }} onClick={() => { setSection("discover"); setFavoritesOnly(false); }}>Find a sound <ArrowRight size={13} /></button></div>}
+          {!user ? <div className="empty-state"><div className="empty-icon"><Library size={21} /></div><h3>Your library is yours to shape</h3><p>Sign in to save favorite sounds, build playlists, and find them later.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : visibleSounds.length ? <><div className="sound-grid">{visibleSounds.map((sound) => <SoundCard key={sound.id} sound={sound} onPlay={() => void playOne(sound, visibleSounds)} onFavorite={() => void toggleFavorite(sound)} favorite={favorites.some((item) => item.id === sound.id)} />)}</div>{!favoritesOnly && librarySounds.length < libraryTotal && <div style={{ textAlign: "center", marginTop: 22 }}><button className="button-secondary" onClick={() => setLibraryPage((page) => page + 1)}>Load more sounds</button></div>}</> : <div className="empty-state"><div className="empty-icon"><Music2 size={21} /></div><h3>{favoritesOnly ? "No favorites yet" : "No sounds saved yet"}</h3><p>Find a sound you love and save it here. Your personal library will be waiting.</p><button className="button-secondary" style={{ marginTop: 17 }} onClick={() => { setSection("discover"); setFavoritesOnly(false); }}>Find a sound <ArrowRight size={13} /></button></div>}
         </>}
 
         {section === "history" && <>
@@ -404,7 +401,7 @@ export default function HomePage() {
           <div className="section-heading history-heading"><div><h1 className="hero-title font-display" style={{ fontSize: 34, margin: 0 }}>Recently played</h1><p className="section-desc" style={{ marginTop: 9 }}>Pick up where a sound left off.</p></div><span className="status-chip">{history.length} {history.length === 1 ? "play" : "plays"}</span></div>
           {!user ? <div className="empty-state"><div className="empty-icon"><History size={21} /></div><h3>Your listening history lives here</h3><p>Sign in to see the sounds you’ve played and return to them anytime.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : history.length ? <div className="history-list">{history.map((item, index) => {
             const sound = item.sound;
-            const isPlayable = Boolean(sound.is_playable && sound.playback_url) || localAudioIds.has(sound.id);
+            const isPlayable = Boolean(sound.is_playable && sound.playback_url);
             const playedAt = new Date(item.last_played_at);
             const dateLabel = Number.isNaN(playedAt.getTime()) ? "Recently" : playedAt.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
             return <article className="history-row" key={`${sound.id}-${item.last_played_at}`}>
@@ -412,8 +409,8 @@ export default function HomePage() {
               <Cover sound={sound} className="history-cover" />
               <div className="history-copy"><h2>{sound.title || "Untitled sound"}</h2><p>{sound.creator_name || "TikTok creator"}</p><span>{dateLabel}</span></div>
               <span className={`history-status ${isPlayable ? "ready" : ""}`}><span />{isPlayable ? "Ready" : "Unavailable"}</span>
-              <button className="button-ghost history-play" aria-label={isPlayable ? `Play ${sound.title || "sound"}` : "Audio unavailable"} disabled={!isPlayable} onClick={() => void playOne(sound, history.map((entry) => entry.sound))}><Play size={15} fill="currentColor" /></button>
               <button className="button-ghost history-favorite" aria-label={favorites.some((saved) => saved.id === sound.id) ? "Remove favorite" : "Add favorite"} onClick={() => void toggleFavorite(sound)}><Heart size={16} fill={favorites.some((saved) => saved.id === sound.id) ? "currentColor" : "none"} style={{ color: favorites.some((saved) => saved.id === sound.id) ? "#111111" : undefined }} /></button>
+              <button className="button-ghost history-play" aria-label={isPlayable ? `Play ${sound.title || "sound"}` : "Audio unavailable"} disabled={!isPlayable} onClick={() => void playOne(sound, history.map((entry) => entry.sound))}><Play size={15} fill="currentColor" /></button>
             </article>;
           })}</div> : <div className="empty-state"><div className="empty-icon"><History size={21} /></div><h3>No plays yet</h3><p>Play a sound from Discover or your library and it will appear here.</p><button className="button-secondary" style={{ marginTop: 17 }} onClick={() => setSection("discover")}>Discover sounds <ArrowRight size={13} /></button></div>}
         </>}
@@ -421,9 +418,9 @@ export default function HomePage() {
         {section === "playlists" && <>
           <div className="eyebrow"><span className="eyebrow-dot" /> Curated by you</div>
           <div className="section-heading" style={{ marginTop: 15 }}><div><h1 className="hero-title font-display" style={{ fontSize: 34, margin: 0 }}>{active?.name ?? "Your playlists"}</h1><p className="section-desc" style={{ marginTop: 9 }}>{active ? active.description || `${active.items.length} sounds collected here.` : "Little collections for the moments that matter."}</p></div>{active ? <div style={{ display: "flex", gap: 7 }}><button className="button-secondary" onClick={() => void startQueue(active.items.map((item) => item.sound))}><Play size={13} fill="currentColor" /> Play playlist</button><button className="button-ghost" aria-label="Back to playlists" onClick={() => setActivePlaylist(null)}><ArrowLeft size={16} /></button></div> : <button className="button-primary" onClick={() => user ? setShowCreate(true) : setAuthMode("login")}><Plus size={15} /> New playlist</button>}</div>
-          {!user ? <div className="empty-state"><div className="empty-icon"><ListMusic size={21} /></div><h3>Build a soundtrack for your life</h3><p>Sign in to make playlists and gather your favorite discoveries.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : active ? <div className="playlist-detail"><div className="detail-title"><div className="playlist-art"><Music2 size={23} /></div><div><h3>{active.name}</h3><p>{active.items.length} sounds · Created {new Date(active.created_at).toLocaleDateString()}</p></div><div style={{ marginLeft: "auto", display: "flex", gap: 4 }}><button className="button-ghost" aria-label="Rename playlist" onClick={async () => { const name = window.prompt("Playlist name", active.name)?.trim(); if (!name || name === active.name) return; try { const updated = await playlistsApi.rename(active.id, name); setPlaylists((items) => items.map((item) => item.id === updated.id ? updated : item)); } catch (error) { showError(error); } }}><MoreHorizontal size={17} /></button><button className="button-ghost" aria-label="Delete playlist" onClick={() => void deletePlaylist(active.id)}><X size={16} /></button></div></div>
+          {!user ? <div className="empty-state"><div className="empty-icon"><ListMusic size={21} /></div><h3>Build a soundtrack for your life</h3><p>Sign in to make playlists and gather your favorite discoveries.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setAuthMode("login")}>Sign in</button></div> : active ? <div className="playlist-detail"><div className="detail-title"><PlaylistCover playlist={active} /><div className="playlist-detail-info"><h3>{active.name}</h3><p>{active.items.length} sounds · Created {new Date(active.created_at).toLocaleDateString()}</p><span className="playlist-cover-hint">{active.cover_image ? "Custom cover" : "Default cover based on title"}</span><div className="playlist-cover-actions"><button className="button-secondary" onClick={() => playlistCoverInput.current?.click()}>Change image</button>{active.cover_image && <button className="button-ghost" onClick={() => void resetPlaylistCover()}>Use title default</button>}<input ref={playlistCoverInput} className="sr-only" type="file" accept="image/*" aria-label="Choose playlist cover image" onChange={(event) => { const file = event.target.files?.[0]; if (file) void changePlaylistCover(file); event.currentTarget.value = ""; }} /></div></div><div style={{ marginLeft: "auto", display: "flex", gap: 4 }}><button className="button-ghost" aria-label="Rename playlist" onClick={async () => { const name = window.prompt("Playlist name", active.name)?.trim(); if (!name || name === active.name) return; try { const updated = await playlistsApi.rename(active.id, name); setPlaylists((items) => items.map((item) => item.id === updated.id ? updated : item)); } catch (error) { showError(error); } }}><MoreHorizontal size={17} /></button><button className="button-ghost" aria-label="Delete playlist" onClick={() => void deletePlaylist(active.id)}><X size={16} /></button></div></div>
             {active.items.length ? active.items.map(({ sound, position }) => <div key={sound.id} className="list-row"><span style={{ width: 19, color: "#777b89", fontSize: 10 }}>{String(position + 1).padStart(2, "0")}</span><Cover sound={sound} /><div className="song-copy"><strong>{sound.title || "Untitled sound"}</strong><span>{sound.creator_name || "TikTok creator"} · {sound.is_playable ? "Ready to play" : "Playback unavailable"}</span></div><button className="button-ghost" aria-label="Move sound up" disabled={position === 0} onClick={async () => { const ids = active.items.map((item) => item.sound.id); [ids[position - 1], ids[position]] = [ids[position], ids[position - 1]]; try { const updated = await playlistsApi.reorder(active.id, ids); setPlaylists((items) => items.map((item) => item.id === updated.id ? updated : item)); } catch (error) { showError(error); } }}><ArrowDownUp size={14} /></button><button className="button-ghost" aria-label="Remove sound" onClick={() => void removeFromPlaylist(active.id, sound.id)}><X size={14} /></button></div>) : <div className="empty-state" style={{ marginTop: 10 }}><div className="empty-icon"><Music2 size={21} /></div><h3>A little room for a new favorite</h3><p>This playlist is empty. Find something you love and add it here.</p><button className="button-secondary" style={{ marginTop: 15 }} onClick={() => setSection("discover")}>Discover sounds</button></div>}
-            </div> : playlists.length ? <div className="playlist-list">{playlists.map((playlist) => <div key={playlist.id} role="button" tabIndex={0} className="playlist-row" style={{ textAlign: "left", color: "inherit" }} onClick={() => setActivePlaylist(playlist.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setActivePlaylist(playlist.id); }}><div className="playlist-art"><Music2 size={23} /></div><div className="playlist-copy"><h3>{playlist.name}</h3><p>{playlist.items.length} sounds{playlist.description ? ` · ${playlist.description}` : ""}</p></div><button className="button-ghost" aria-label={`Play ${playlist.name}`} onClick={(event) => { event.stopPropagation(); void startQueue(playlist.items.map((item) => item.sound)); }}><Play size={15} fill="currentColor" /></button><ChevronDown size={16} style={{ transform: "rotate(-90deg)", color: "#737785" }} /></div>)}</div> : <div className="empty-state"><div className="empty-icon"><ListMusic size={21} /></div><h3>Make your first playlist</h3><p>Collect the sounds you keep coming back to. Every mood can have its own little corner.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setShowCreate(true)}><Plus size={14} /> Create a playlist</button></div>}
+            </div> : playlists.length ? <div className="playlist-list">{playlists.map((playlist) => <div key={playlist.id} role="button" tabIndex={0} className="playlist-row" style={{ textAlign: "left", color: "inherit" }} onClick={() => setActivePlaylist(playlist.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setActivePlaylist(playlist.id); }}><PlaylistCover playlist={playlist} /><div className="playlist-copy"><h3>{playlist.name}</h3><p>{playlist.items.length} sounds{playlist.description ? ` · ${playlist.description}` : ""}</p></div><button className="button-ghost" aria-label={`Play ${playlist.name}`} onClick={(event) => { event.stopPropagation(); void startQueue(playlist.items.map((item) => item.sound)); }}><Play size={15} fill="currentColor" /></button><ChevronDown size={16} style={{ transform: "rotate(-90deg)", color: "#737785" }} /></div>)}</div> : <div className="empty-state"><div className="empty-icon"><ListMusic size={21} /></div><h3>Make your first playlist</h3><p>Collect the sounds you keep coming back to. Every mood can have its own little corner.</p><button className="button-primary" style={{ marginTop: 17 }} onClick={() => setShowCreate(true)}><Plus size={14} /> Create a playlist</button></div>}
         </>}
       </div>
     </main>
@@ -433,11 +430,11 @@ export default function HomePage() {
     {toast && <div className="toast" role="status">{toast}</div>}
     {authMode && <AuthDialog mode={authMode} onClose={() => setAuthMode(null)} onSuccess={(current) => { setUser(current); setAuthMode(null); setToast("You’re all set. Welcome to Vorha."); void refresh(current); }} />}
     {showCreate && <div className="auth-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}><div className="auth-card"><div className="auth-head"><span className="eyebrow"><span className="eyebrow-dot" /> New collection</span><button className="button-ghost" onClick={() => setShowCreate(false)} aria-label="Close"><X size={17} /></button></div><h2>Name this feeling.</h2><p className="auth-sub">Give your new playlist a name you’ll remember.</p><form onSubmit={createPlaylist}><label className="field-label" htmlFor="playlist-name">Playlist name</label><input className="field-input" id="playlist-name" autoFocus maxLength={100} required value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="Late night loops" /><button className="button-primary" style={{ width: "100%", marginTop: 19 }}><Plus size={15} /> Create playlist</button></form></div></div>}
-    {showPlaylistPicker && <div className="auth-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPlaylistPicker(false); }}><div className="auth-card"><div className="auth-head"><span className="eyebrow"><span className="eyebrow-dot" /> Save this sound</span><button className="button-ghost" onClick={() => setShowPlaylistPicker(false)} aria-label="Close"><X size={17} /></button></div><h2>Add to a playlist</h2><p className="auth-sub">Choose a collection for “{result?.title ?? "this sound"}”.</p>{playlists.length ? <div className="playlist-list">{playlists.map((playlist) => <button key={playlist.id} className="playlist-row" onClick={() => void addToPlaylist(playlist)}><div className="playlist-art"><Music2 size={19} /></div><div className="playlist-copy"><h3>{playlist.name}</h3><p>{playlist.items.length} sounds</p></div><Plus size={16} /></button>)}</div> : <div className="empty-state"><h3>No playlists yet</h3><p>Create one to keep this sound close.</p></div>}<button className="button-secondary" style={{ width: "100%", marginTop: 13 }} onClick={() => { setShowPlaylistPicker(false); setShowCreate(true); }}><Plus size={14} /> Create a playlist</button></div></div>}
+    {showPlaylistPicker && <div className="auth-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowPlaylistPicker(false); }}><div className="auth-card"><div className="auth-head"><span className="eyebrow"><span className="eyebrow-dot" /> Save this sound</span><button className="button-ghost" onClick={() => setShowPlaylistPicker(false)} aria-label="Close"><X size={17} /></button></div><h2>Add to a playlist</h2><p className="auth-sub">Choose a collection for “{result?.title ?? "this sound"}”.</p>{playlists.length ? <div className="playlist-list">{playlists.map((playlist) => <button key={playlist.id} className="playlist-row" onClick={() => void addToPlaylist(playlist)}><PlaylistCover playlist={playlist} /><div className="playlist-copy"><h3>{playlist.name}</h3><p>{playlist.items.length} sounds</p></div><Plus size={16} /></button>)}</div> : <div className="empty-state"><h3>No playlists yet</h3><p>Create one to keep this sound close.</p></div>}<button className="button-secondary" style={{ width: "100%", marginTop: 13 }} onClick={() => { setShowPlaylistPicker(false); setShowCreate(true); }}><Plus size={14} /> Create a playlist</button></div></div>}
   </div>;
 }
 
-function SoundCard({ sound, onPlay, onFavorite, favorite, localAudioAvailable, compact = false }: { sound: Sound; onPlay: () => void; onFavorite: () => void; favorite: boolean; localAudioAvailable: boolean; compact?: boolean }) {
-  const canPlay = Boolean(sound.is_playable && sound.playback_url) || localAudioAvailable;
-  return <article className={`mini-card ${compact ? "compact-card" : ""}`}><Cover sound={sound} /><h3 className="mini-title">{sound.title || "Untitled sound"}</h3><p className="mini-subtitle">{sound.creator_name || "TikTok creator"}</p><div className="mini-actions"><button className="button-ghost" aria-label={canPlay ? "Play sound" : "Audio unavailable"} disabled={!canPlay} onClick={onPlay}><Play size={14} fill="currentColor" /></button><span style={{ color: "#737785", fontSize: 9 }}>{sound.is_playable && sound.playback_url ? "Ready" : localAudioAvailable ? "On this device" : "Unavailable"}</span><button className="button-ghost" aria-label={favorite ? "Remove favorite" : "Add favorite"} onClick={onFavorite}><Heart size={15} fill={favorite ? "currentColor" : "none"} style={{ color: favorite ? "#111111" : undefined }} /></button></div></article>;
+function SoundCard({ sound, onPlay, onFavorite, favorite, compact = false }: { sound: Sound; onPlay: () => void; onFavorite: () => void; favorite: boolean; compact?: boolean }) {
+  const canPlay = Boolean(sound.is_playable && sound.playback_url);
+  return <article className={`mini-card ${compact ? "compact-card" : ""}`}><Cover sound={sound} /><h3 className="mini-title">{sound.title || "Untitled sound"}</h3><p className="mini-subtitle">{sound.creator_name || "TikTok creator"}</p><div className="mini-actions">{compact ? <><button className="button-ghost recent-favorite-button" aria-label={favorite ? "Remove favorite" : "Add favorite"} onClick={onFavorite}>{favorite ? "Saved" : "Favorite"}</button><button className="recent-play-button" aria-label={canPlay ? `Play ${sound.title || "sound"}` : "Audio unavailable"} title={canPlay ? "Play" : "Audio unavailable"} disabled={!canPlay} onClick={onPlay}><Play size={15} fill="currentColor" /></button></> : <><button className="button-ghost" aria-label={canPlay ? "Play sound" : "Audio unavailable"} disabled={!canPlay} onClick={onPlay}><Play size={14} fill="currentColor" /></button><span style={{ color: "#737785", fontSize: 9 }}>{canPlay ? "Ready" : "Unavailable"}</span><button className="button-ghost" aria-label={favorite ? "Remove favorite" : "Add favorite"} onClick={onFavorite}>{favorite ? "Saved" : "Favorite"}</button></>}</div></article>;
 }
