@@ -35,6 +35,8 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
       REDIS_URL: redis://redis:6379/0
       FRONTEND_URL: http://localhost:3000
+      TELEGRAM_CLIENT_ID: ${TELEGRAM_CLIENT_ID:-}
+      TELEGRAM_BOT_ID: ${TELEGRAM_BOT_ID:-}
       AUDIO_CACHE_DIR: /app/.audio-cache
     ports:
       - "8000:8000"

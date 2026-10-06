@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     redis_url: str | None = None
     frontend_url: str = "http://localhost:3000"
+    telegram_client_id: str | None = None
+    telegram_bot_id: str | None = None
     audio_extraction_enabled: bool = True
     audio_cache_dir: str = "./.audio-cache"
     audio_bitrate: str = "128"

@@ -16,10 +16,14 @@ class LoginRequest(ORMModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class TelegramLoginRequest(ORMModel):
+    id_token: str = Field(min_length=20, max_length=8192)
+
+
 class UserRead(ORMModel):
     id: int
     username: str
-    email: EmailStr
+    email: EmailStr | None
     created_at: datetime
 
 

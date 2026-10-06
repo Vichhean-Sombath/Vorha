@@ -14,7 +14,7 @@ The backend resolves the video's audio track with `yt-dlp`, transcodes it to MP3
 - TikTok short-link resolution, YouTube link normalization, and bounded retries for temporary metadata service failures
 - Server-side audio extraction (`yt-dlp` + `ffmpeg`), on-disk cache, and range-request streaming
 - Fallback import of user-authorized audio or video files, stored locally in the current browser
-- Email registration and login with Argon2 password hashes and an HttpOnly JWT cookie
+- Email registration and login with Argon2 password hashes, Telegram OIDC login, and an HttpOnly JWT cookie
 - MySQL-backed sounds, playlists, favorites, and listening history
 - Playlist creation, rename, deletion, ordering, and sound management
 - Search across a signed-in user's saved library
@@ -48,7 +48,9 @@ cp .env.example .env
 
 Set unique `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD`, and `JWT_SECRET_KEY` values before exposing any service beyond your own machine. Do not commit `.env`.
 
-Backend settings: `APP_NAME`, `ENVIRONMENT`, `DATABASE_URL`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REDIS_URL`, `FRONTEND_URL`, `AUDIO_EXTRACTION_ENABLED`, `AUDIO_CACHE_DIR`, `AUDIO_BITRATE`, `AUDIO_MAX_BYTES`, and `AUDIO_EXTRACT_TIMEOUT_SECONDS`.
+Backend settings: `APP_NAME`, `ENVIRONMENT`, `DATABASE_URL`, `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REDIS_URL`, `FRONTEND_URL`, `TELEGRAM_CLIENT_ID`, `TELEGRAM_BOT_ID`, `AUDIO_EXTRACTION_ENABLED`, `AUDIO_CACHE_DIR`, `AUDIO_BITRATE`, `AUDIO_MAX_BYTES`, and `AUDIO_EXTRACT_TIMEOUT_SECONDS`.
+
+To enable Telegram login, create a bot with [@BotFather](https://t.me/BotFather), open its **Login Widget** settings, and add your frontend origin (for local development, `http://localhost:3000`) to the allowed URLs. Set `TELEGRAM_CLIENT_ID` from BotFather in `.env`. If Telegram reports `bot_id required`, set `TELEGRAM_BOT_ID` to the numeric bot ID (the number before the colon in its bot token); keep the token itself private. The frontend opens Telegram's official login popup; the backend verifies the signed ID token and nonce before creating the session. Telegram accounts are created without an email address; account linking is not included yet.
 
 `AUDIO_EXTRACTION_ENABLED=false` disables downloading and returns metadata only. `AUDIO_CACHE_DIR` defaults to `./.audio-cache` and is a Docker volume in Compose.
 
@@ -117,7 +119,7 @@ Base path: `/api/v1`. Interactive OpenAPI documentation is served at `/docs`.
 
 | Area | Endpoints |
 | --- | --- |
-| Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/logout` |
+| Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/telegram/nonce`, `POST /auth/telegram/login`, `GET /auth/me`, `POST /auth/logout` |
 | Sounds | `POST /sounds/analyze`, `POST /sounds/{id}/audio`, `GET /sounds/{id}/stream`, `GET /sounds/{id}`, `GET /sounds?q=...&page=1&limit=20` |
 | Playlists | `GET/POST /playlists`, `GET/PATCH/DELETE /playlists/{id}`, add/remove/reorder sounds under `/playlists/{id}/sounds` |
 | Favorites | `GET /favorites`, `POST/DELETE /favorites/{sound_id}` |

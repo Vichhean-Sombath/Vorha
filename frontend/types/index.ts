@@ -1,4 +1,4 @@
-export type User = { id: number; username: string; email: string; created_at: string };
+export type User = { id: number; username: string; email: string | null; created_at: string };
 export type Sound = {
   id: number;
   source_platform: string;
