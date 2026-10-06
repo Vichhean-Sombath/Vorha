@@ -142,9 +142,56 @@ function PlayerBar({ sound, queue, favorite, playRequest, onFavorite, onSelect, 
   }
 
   const handleEnded = () => { setPlaying(false); if (repeat && mediaRef.current) { mediaRef.current.currentTime = 0; void mediaRef.current.play(); setPlaying(true); } else { autoplayNext.current = true; onNext(shuffle); } };
-  const handleTimeUpdate = (event: React.SyntheticEvent<HTMLMediaElement>) => setTime(event.currentTarget.currentTime);
+  const handleTimeUpdate = (event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const media = event.currentTarget;
+    setTime(media.currentTime);
+    if ("mediaSession" in navigator && Number.isFinite(media.duration) && media.duration > 0) {
+      try { navigator.mediaSession.setPositionState({ duration: media.duration, playbackRate: media.playbackRate, position: media.currentTime }); } catch { /* Position state is optional browser support. */ }
+    }
+  };
   const handleLoadedMetadata = (event: React.SyntheticEvent<HTMLMediaElement>) => setDuration(event.currentTarget.duration || 0);
-  const mediaElementProps = { src: source, onTimeUpdate: handleTimeUpdate, onLoadedMetadata: handleLoadedMetadata, onCanPlay: () => setLoading(false), onWaiting: () => setLoading(true), onEnded: handleEnded, onError: () => { setPlaying(false); setLoading(false); setPlayerError(true); }, "aria-hidden": true as const, tabIndex: -1 };
+  const mediaElementProps = { src: source, onTimeUpdate: handleTimeUpdate, onLoadedMetadata: handleLoadedMetadata, onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onCanPlay: () => setLoading(false), onWaiting: () => setLoading(true), onEnded: handleEnded, onError: () => { setPlaying(false); setLoading(false); setPlayerError(true); }, "aria-hidden": true as const, tabIndex: -1 };
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const session = navigator.mediaSession;
+    if (!sound) {
+      session.metadata = null;
+      session.playbackState = "none";
+      return;
+    }
+
+    session.metadata = new MediaMetadata({
+      title: sound.title || "Untitled sound",
+      artist: sound.creator_name || sound.creator_username || platformName(sound.source_platform),
+      album: "Vorha",
+      artwork: sound.thumbnail_url ? [{ src: sound.thumbnail_url, sizes: "512x512" }] : [],
+    });
+
+    const actions: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
+      ["play", () => { void mediaRef.current?.play().catch(() => setPlayerError(true)); }],
+      ["pause", () => mediaRef.current?.pause()],
+      ["previoustrack", onPrevious],
+      ["nexttrack", () => onNext(shuffle)],
+      ["seekbackward", (details) => { if (mediaRef.current) mediaRef.current.currentTime = Math.max(0, mediaRef.current.currentTime - (details.seekOffset ?? 10)); }],
+      ["seekforward", (details) => { if (mediaRef.current) mediaRef.current.currentTime = Math.min(mediaRef.current.duration || Infinity, mediaRef.current.currentTime + (details.seekOffset ?? 10)); }],
+      ["seekto", (details) => { if (mediaRef.current && details.seekTime !== undefined) mediaRef.current.currentTime = details.seekTime; }],
+    ];
+    for (const [action, handler] of actions) {
+      try { session.setActionHandler(action, handler); } catch { /* Ignore actions this browser does not support. */ }
+    }
+
+    return () => {
+      for (const [action] of actions) {
+        try { session.setActionHandler(action, null); } catch { /* Ignore actions this browser does not support. */ }
+      }
+    };
+  }, [sound?.id, sound?.title, sound?.creator_name, sound?.creator_username, sound?.source_platform, sound?.thumbnail_url, onNext, onPrevious, shuffle]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = playing ? "playing" : available ? "paused" : "none";
+  }, [playing, available]);
 
   return <>
     {sound?.playback_media_type === "video" ? <video className="sr-only" ref={(element) => { mediaRef.current = element; }} {...mediaElementProps} playsInline preload="metadata" /> : <audio className="sr-only" ref={(element) => { mediaRef.current = element; }} {...mediaElementProps} preload="metadata" />}
