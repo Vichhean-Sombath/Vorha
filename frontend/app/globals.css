@@ -20,7 +20,7 @@ button:disabled { cursor:not-allowed; opacity:.46; }
 .sidebar { width:244px; border-right:1px solid var(--line); position:fixed; inset:0 auto 0 0; display:flex; flex-direction:column; padding:27px 17px 20px; background:rgba(14,16,21,.85); backdrop-filter:blur(22px); z-index:10; }
 .brand { display:flex; align-items:center; gap:11px; padding:0 13px 36px; color:var(--text); text-decoration:none; }
 .brand-mark { width:34px;height:34px;border-radius:12px;background:linear-gradient(145deg,#c1b5ff,#7865de);display:grid;place-items:center;color:#171321;box-shadow:0 7px 22px #8169d344; }
-.brand-word { font:800 19px Poppins,ui-sans-serif,system-ui,sans-serif;letter-spacing:-.055em; }
+.brand-word { font:500 19px Poppins,ui-sans-serif,system-ui,sans-serif;letter-spacing:-.055em; }
 .brand-note { margin-left:auto;color:#747785;font-size:10px;letter-spacing:.14em;text-transform:uppercase; }
 .nav-label { color:#686d7b;text-transform:uppercase;letter-spacing:.13em;font-size:10px;font-weight:700;padding:0 13px;margin:4px 0 10px; }
 .nav-item { width:100%;height:43px;display:flex;align-items:center;gap:12px;padding:0 13px;border:0;border-radius:11px;color:#9da0ad;background:transparent;text-align:left;transition:.2s; }
@@ -318,7 +318,7 @@ body * { font-family:Poppins,ui-sans-serif,system-ui,sans-serif; }
 
 /* Refined type scale */
 body { font-size:14px;line-height:1.55;font-weight:400; }
-.brand-word { font-size:18px;font-weight:700; }
+.brand-word { font-size:18px;font-weight:500; }
 .brand-note { font-size:9px;letter-spacing:.12em; }
 .nav-label { font-size:9px;font-weight:600;letter-spacing:.12em; }
 .nav-item { font-size:13px;font-weight:500; }
@@ -481,7 +481,7 @@ body { background:radial-gradient(ellipse at 18% 12%,#0000000a,transparent 34%),
   .topbar-actions { gap:5px; }
   .topbar-actions > span:not(.avatar) { display:none; }
   .topbar-actions .avatar { width:30px;height:30px; }
-  .mobile-brand .brand-mark { width:34px;height:34px;border-radius:10px; }
+.mobile-brand .brand-mark { width:34px;height:34px;border-radius:10px; }
   .mobile-brand .brand-note { font-size:7px; }
   .bottom-nav {
     height:calc(58px + env(safe-area-inset-bottom));
@@ -509,3 +509,6 @@ body { background:radial-gradient(ellipse at 18% 12%,#0000000a,transparent 34%),
   .toast { bottom:calc(160px + env(safe-area-inset-bottom)); }
   .queue-popover { bottom:calc(158px + env(safe-area-inset-bottom)); }
 }
+
+.brand-mark { background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important; }
+.brand-mark img { display:block;width:100%;height:100%;object-fit:contain; }

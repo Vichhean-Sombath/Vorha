@@ -28,7 +28,7 @@ function Cover({ sound, className = "" }: { sound?: Sound | null; className?: st
 }
 
 function BrandMark() {
-  return <span className="brand-mark" aria-hidden="true"><Music2 className="brand-mark-note" size={18} strokeWidth={2.3} /><span className="brand-mark-wave"><i /><i /><i /><i /></span></span>;
+  return <span className="brand-mark" aria-hidden="true"><img src="/vorha-logo.png" alt="" /></span>;
 }
 
 function PlaylistCover({ playlist, className = "" }: { playlist: Playlist; className?: string }) {
@@ -86,7 +86,7 @@ function AuthDialog({ mode, onClose, onSuccess }: { mode: AuthMode; onClose: () 
 
   return <div className="auth-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="auth-card">
-      <div className="auth-head"><a className="brand" style={{ padding: 0 }}><span className="brand-mark"><AudioLines size={18} /></span><span className="brand-word">Vorha</span></a><button className="button-ghost" aria-label="Close" onClick={onClose}><X size={18} /></button></div>
+      <div className="auth-head"><a className="brand" style={{ padding: 0 }}><BrandMark /><span className="brand-word">Vorha</span></a><button className="button-ghost" aria-label="Close" onClick={onClose}><X size={18} /></button></div>
       <h2>{currentMode === "register" ? "Make room for good sounds." : "Welcome back."}</h2>
       <p className="auth-sub">{currentMode === "register" ? "Create an account to build your personal sound library." : "Sign in to pick up where your listening left off."}</p>
       <form onSubmit={submit}>
