@@ -6,6 +6,7 @@ from app.schemas.sound import SoundMetadata
 from app.services import audio_service
 from app.services.audio_service import AudioExtractionError, ExtractedAudio
 from app.services.tiktok_service import TikTokService
+from app.services.youtube_service import YouTubeService
 
 
 async def register(client):
@@ -40,6 +41,29 @@ def test_tiktok_url_validation():
         TikTokService.validate_url("https://not-tiktok.example/@user/video/12345")
     with pytest.raises(Exception):
         TikTokService.validate_url("http://www.tiktok.com/@user/video/12345")
+
+
+def test_youtube_url_validation():
+    watch = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert YouTubeService.validate_url("https://youtu.be/dQw4w9WgXcQ") == watch
+    assert YouTubeService.validate_url(f"{watch}&list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf") == watch
+    assert YouTubeService.validate_url("https://music.youtube.com/watch?v=dQw4w9WgXcQ") == watch
+    assert YouTubeService.validate_url("https://www.youtube.com/shorts/dQw4w9WgXcQ") == watch
+    with pytest.raises(Exception):
+        YouTubeService.validate_url("https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf")
+    with pytest.raises(Exception):
+        YouTubeService.validate_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    with pytest.raises(Exception):
+        YouTubeService.validate_url("https://not-youtube.example/watch?v=dQw4w9WgXcQ")
+
+
+def test_platforms_only_claim_their_own_hosts():
+    assert TikTokService.matches("https://www.tiktok.com/@user/video/12345")
+    assert YouTubeService.matches("https://youtu.be/dQw4w9WgXcQ")
+    assert not TikTokService.matches("https://youtu.be/dQw4w9WgXcQ")
+    assert not YouTubeService.matches("https://www.tiktok.com/@user/video/12345")
+    assert not YouTubeService.matches("https://example.com/watch?v=dQw4w9WgXcQ")
+    assert not YouTubeService.matches("http://youtu.be/dQw4w9WgXcQ")
 
 
 async def test_analyze_playlists_favorites_and_history(client, monkeypatch):
@@ -89,7 +113,7 @@ async def test_analyze_playlists_favorites_and_history(client, monkeypatch):
     assert (await client.delete("/api/v1/history")).status_code == 204
 
 
-async def test_analysis_rejects_non_tiktok_and_library_requires_auth(client):
+async def test_analysis_rejects_unsupported_urls_and_library_requires_auth(client):
     invalid = await client.post("/api/v1/sounds/analyze", json={"url": "https://example.com/video/123"})
     assert invalid.status_code == 422
     assert invalid.json()["error"]["code"] == "UNSUPPORTED_URL"
@@ -114,17 +138,37 @@ def stub_metadata(monkeypatch):
     monkeypatch.setattr(sounds.tiktok_service, "analyze", fake_analyze)
 
 
+def stub_youtube_metadata(monkeypatch):
+    async def fake_analyze(source_url: str) -> SoundMetadata:
+        return SoundMetadata(
+            title="Never Gonna Give You Up",
+            creator_name="Rick Astley",
+            creator_username="rickastley",
+            source_url=source_url,
+            external_id="dQw4w9WgXcQ",
+            is_playable=False,
+        )
+
+    monkeypatch.setattr(sounds.youtube_service, "analyze", fake_analyze)
+
+
 def stub_extraction(monkeypatch, tmp_path, duration=42):
     monkeypatch.setattr(settings, "audio_extraction_enabled", True)
     target = tmp_path / "audio-cache" / f"987654321.{audio_service.AUDIO_EXTENSION}"
 
-    async def fake_ensure(source_url: str, key: str | None) -> ExtractedAudio:
+    async def fake_ensure(source_url: str, key: str | None, platform: str = "tiktok") -> ExtractedAudio:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(AUDIO_BYTES)
         return ExtractedAudio(path=target, duration_seconds=duration)
 
     monkeypatch.setattr(sounds.audio_service, "ensure_audio", fake_ensure)
     return target
+
+
+def test_platform_cache_keys_do_not_collide():
+    assert audio_service.platform_key("tiktok", "7106594312292453675") == "7106594312292453675"
+    assert audio_service.platform_key(None, "7106594312292453675") == "7106594312292453675"
+    assert audio_service.platform_key("youtube", "dQw4w9WgXcQ") == "youtube-dQw4w9WgXcQ"
 
 
 def test_audio_cache_key_rejects_unsafe_values():
@@ -143,6 +187,7 @@ def test_download_errors_map_to_stable_codes():
         "age-restricted": ("VIDEO_RESTRICTED", 422),
         "HTTP Error 429: Too Many Requests": ("RATE_LIMITED", 429),
         "Unsupported URL: https://example.com/x": ("UNSUPPORTED_URL", 422),
+        "The uploader has not made this video available in your country": ("VIDEO_RESTRICTED", 422),
         "something completely unexpected": ("AUDIO_EXTRACTION_FAILED", 502),
     }
     for message, (code, status_code) in cases.items():
@@ -245,7 +290,7 @@ async def test_failed_extraction_keeps_metadata_and_reports_reason(client, monke
     stub_metadata(monkeypatch)
     monkeypatch.setattr(settings, "audio_extraction_enabled", True)
 
-    async def failing(source_url: str, key: str | None) -> ExtractedAudio:
+    async def failing(source_url: str, key: str | None, platform: str = "tiktok") -> ExtractedAudio:
         raise AudioExtractionError("VIDEO_RESTRICTED", "TikTok is blocking automated access to this video.", 422)
 
     monkeypatch.setattr(sounds.audio_service, "ensure_audio", failing)
@@ -259,3 +304,40 @@ async def test_failed_extraction_keeps_metadata_and_reports_reason(client, monke
     retry = await client.post(f"/api/v1/sounds/{analyzed.json()['id']}/audio")
     assert retry.status_code == 422
     assert retry.json()["error"]["code"] == "VIDEO_RESTRICTED"
+
+
+async def test_analyze_youtube_short_link_streams_namespaced_audio(client, monkeypatch, tmp_path):
+    await register(client)
+    stub_youtube_metadata(monkeypatch)
+    monkeypatch.setattr(settings, "audio_extraction_enabled", True)
+    requests: list[tuple[str, str, str]] = []
+
+    async def fake_ensure(source_url: str, key: str | None, platform: str = "tiktok") -> ExtractedAudio:
+        requests.append((source_url, key or "", platform))
+        target = tmp_path / "audio-cache" / f"{key}.{audio_service.AUDIO_EXTENSION}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(AUDIO_BYTES)
+        return ExtractedAudio(path=target, duration_seconds=212)
+
+    monkeypatch.setattr(sounds.audio_service, "ensure_audio", fake_ensure)
+
+    analyzed = await client.post("/api/v1/sounds/analyze", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    assert analyzed.status_code == 200
+    body = analyzed.json()
+    assert body["source_platform"] == "youtube"
+    assert body["source_url"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert body["title"] == "Never Gonna Give You Up"
+    assert body["is_playable"] is True
+    assert body["duration_seconds"] == 212
+    assert requests == [("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube-dQw4w9WgXcQ", "youtube")]
+
+    stream = await client.get(f"/api/v1{body['playback_url']}")
+    assert stream.status_code == 200
+    assert stream.content == AUDIO_BYTES
+
+    # The same video analyzed again reuses the stored sound and the cached file.
+    assert audio_service.has_cached_audio("youtube-dQw4w9WgXcQ")
+    again = await client.post("/api/v1/sounds/analyze", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"})
+    assert again.json()["id"] == body["id"]
+    assert again.json()["is_playable"] is True
+    assert again.json()["duration_seconds"] == 212

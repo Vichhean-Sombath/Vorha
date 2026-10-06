@@ -19,7 +19,8 @@ from app.routers.sounds import limiter
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
-    await sounds.tiktok_service.close()
+    for _platform, service in sounds.SOURCE_SERVICES:
+        await service.close()
 
 
 app = FastAPI(title=settings.app_name, version="1.0.0", description="Your personal sound library.", lifespan=lifespan)

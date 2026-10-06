@@ -17,18 +17,25 @@ logger = logging.getLogger(__name__)
 AUDIO_MEDIA_TYPE = "audio/mpeg"
 AUDIO_EXTENSION = "mp3"
 MAX_CONCURRENT_EXTRACTIONS = 2
+DEFAULT_PLATFORM = "tiktok"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+# A TikTok referer is required by its CDN and would break any other host.
+PLATFORM_HEADERS = {
+    "tiktok": {"User-Agent": USER_AGENT, "Referer": "https://www.tiktok.com/"},
+    "youtube": {"User-Agent": USER_AGENT},
+}
 
 SAFE_KEY = re.compile(r"^[A-Za-z0-9_-]{4,80}$")
 
 # Ordered so the most specific platform refusal wins; patterns are matched case-insensitively.
 _ERROR_RULES: tuple[tuple[str, str, str, int], ...] = (
-    (r"private video|only the owner", "VIDEO_NOT_FOUND", "This TikTok video is private.", 404),
-    (r"sign in to confirm|login required|account\s+or\s+log\s?in|captcha", "VIDEO_RESTRICTED", "TikTok is blocking automated access to this video. Attach a local file instead.", 422),
+    (r"private video|only the owner", "VIDEO_NOT_FOUND", "This video is private.", 404),
+    (r"sign in to confirm|login required|account\s+or\s+log\s?in|captcha", "VIDEO_RESTRICTED", "The source site is blocking automated access to this video.", 422),
     (r"age[\s_-]?restrict", "VIDEO_RESTRICTED", "This video is age-restricted and cannot be fetched automatically.", 422),
-    (r"throttl|\b429\b|too many requests|rate[\s_-]?limit", "RATE_LIMITED", "TikTok is limiting automated requests. Try again shortly.", 429),
-    (r"unsupported url|no video|is not a valid url", "UNSUPPORTED_URL", "This URL does not point to a downloadable TikTok video.", 422),
-    (r"removed|unavailable|not available|does not exist|\b404\b|no such file", "VIDEO_NOT_FOUND", "This TikTok video is unavailable or was removed.", 404),
+    (r"in your country|geo[\s_-]?restrict|premium required", "VIDEO_RESTRICTED", "This video is region- or subscription-locked and cannot be fetched automatically.", 422),
+    (r"throttl|\b429\b|too many requests|rate[\s_-]?limit", "RATE_LIMITED", "The source site is limiting automated requests. Try again shortly.", 429),
+    (r"unsupported url|no video|is not a valid url", "UNSUPPORTED_URL", "This URL does not point to a downloadable video.", 422),
+    (r"removed|unavailable|not available|does not exist|\b404\b|no such file", "VIDEO_NOT_FOUND", "This video is unavailable or was removed.", 404),
     (r"ffmpeg|ffprobe", "AUDIO_EXTRACTION_UNAVAILABLE", "Audio conversion failed on the server.", 503),
 )
 
@@ -61,6 +68,18 @@ def normalize_key(value: str | None) -> str | None:
     return candidate if SAFE_KEY.match(candidate) else None
 
 
+def platform_key(platform: str | None, external_id: str | None) -> str | None:
+    """Namespace cached audio per platform so ids from different sites cannot collide.
+
+    TikTok keeps the bare video id, which is the layout existing caches already use.
+    """
+    key = normalize_key(external_id)
+    if not key:
+        return None
+    source = (platform or DEFAULT_PLATFORM).strip().lower()
+    return key if source == DEFAULT_PLATFORM else normalize_key(f"{source}-{key}")
+
+
 def audio_path(key: str) -> Path:
     return cache_root() / f"{key}.{AUDIO_EXTENSION}"
 
@@ -80,11 +99,11 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-async def ensure_audio(source_url: str, key: str | None) -> ExtractedAudio:
+async def ensure_audio(source_url: str, key: str | None, platform: str = DEFAULT_PLATFORM) -> ExtractedAudio:
     """Return the audio-only file for a video, extracting and caching it on first use."""
     cache_key = normalize_key(key)
     if not cache_key:
-        raise AudioExtractionError("UNSUPPORTED_URL", "This TikTok link does not identify a single video.", 422)
+        raise AudioExtractionError("UNSUPPORTED_URL", "This link does not identify a single video.", 422)
     existing = cached_audio(cache_key)
     if existing:
         return existing
@@ -101,7 +120,7 @@ async def ensure_audio(source_url: str, key: str | None) -> ExtractedAudio:
             if existing:
                 return existing
             return await asyncio.wait_for(
-                asyncio.to_thread(_extract, source_url, cache_key),
+                asyncio.to_thread(_extract, source_url, cache_key, platform),
                 timeout=settings.audio_extract_timeout_seconds,
             )
     except asyncio.TimeoutError:
@@ -125,7 +144,7 @@ def remove_cached_audio(key: str | None) -> None:
         logger.info("Could not delete cached audio for %s", cache_key)
 
 
-def _extract(source_url: str, cache_key: str) -> ExtractedAudio:
+def _extract(source_url: str, cache_key: str, platform: str = DEFAULT_PLATFORM) -> ExtractedAudio:
     try:
         import yt_dlp
         from yt_dlp.utils import DownloadError, ExtractorError
@@ -146,7 +165,7 @@ def _extract(source_url: str, cache_key: str) -> ExtractedAudio:
         "fragment_retries": 1,
         "socket_timeout": 20,
         "overwrites": True,
-        "http_headers": {"User-Agent": USER_AGENT, "Referer": "https://www.tiktok.com/"},
+        "http_headers": PLATFORM_HEADERS.get(platform, {"User-Agent": USER_AGENT}),
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": AUDIO_EXTENSION, "preferredquality": settings.audio_bitrate},
         ],

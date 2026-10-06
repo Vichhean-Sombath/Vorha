@@ -1,17 +1,17 @@
 # Vorha
 
-Vorha is a personal sound library built around public TikTok videos. Paste a video link, and Vorha reads its metadata, fetches the soundtrack, and plays it audio-only in a persistent player — no video is shown.
+Vorha is a personal sound library built around public TikTok and YouTube videos. Paste a video link, and Vorha reads its metadata, fetches the soundtrack, and plays it audio-only in a persistent player — no video is shown.
 
-The backend resolves the video's audio track with `yt-dlp`, transcodes it to MP3 with `ffmpeg`, caches the file on the server, and streams it to the browser with byte-range support so seeking works. Metadata comes from TikTok's public oEmbed endpoint plus the extractor.
+The backend resolves the video's audio track with `yt-dlp`, transcodes it to MP3 with `ffmpeg`, caches the file on the server, and streams it to the browser with byte-range support so seeking works. Metadata comes from each platform's public oEmbed endpoint plus the extractor.
 
-**This downloads media from TikTok.** That is a deliberate change from a metadata-only design and it conflicts with TikTok's Terms of Service; the audio itself is usually third-party copyrighted music. Keep the deployment private, do not redistribute cached files, and take responsibility for how you use it. Set `AUDIO_EXTRACTION_ENABLED=false` to fall back to the metadata-only behaviour, where users attach an audio or video file they are authorized to use (stored in browser-local IndexedDB, played soundtrack-only).
+**This downloads media from TikTok and YouTube.** That is a deliberate change from a metadata-only design and it conflicts with both platforms' Terms of Service; the audio itself is usually third-party copyrighted music. Keep the deployment private, do not redistribute cached files, and take responsibility for how you use it. Set `AUDIO_EXTRACTION_ENABLED=false` to fall back to the metadata-only behaviour, where users attach an audio or video file they are authorized to use (stored in browser-local IndexedDB, played soundtrack-only).
 
 ## Features
 
 - Responsive dark music-library interface with Discover, My Library, and Playlists views
-- Audio-only playback straight from a pasted TikTok URL, with the picture hidden
-- Public TikTok video metadata lookup, URL validation, and request throttling
-- TikTok short-link resolution and bounded retries for temporary metadata service failures
+- Audio-only playback straight from a pasted TikTok or YouTube URL, with the picture hidden
+- Public video metadata lookup, URL validation, and request throttling for both platforms
+- TikTok short-link resolution, YouTube link normalization, and bounded retries for temporary metadata service failures
 - Server-side audio extraction (`yt-dlp` + `ffmpeg`), on-disk cache, and range-request streaming
 - Fallback import of user-authorized audio or video files, stored locally in the current browser
 - Email registration and login with Argon2 password hashes and an HttpOnly JWT cookie
@@ -31,7 +31,7 @@ database/  MySQL 8.4
 cache/     Redis 7 (optional; application remains usable without it)
 ```
 
-The frontend uses a central API client in `frontend/lib/api`. FastAPI routers call SQLAlchemy models, the TikTok metadata service, and the audio extraction service. Authentication state is held in a SameSite, HttpOnly cookie, with JWT claims expiring after the configured duration. Extracted MP3s live outside the database in `AUDIO_CACHE_DIR` and are served by `GET /sounds/{id}/stream`.
+The frontend uses a central API client in `frontend/lib/api`. FastAPI routers call SQLAlchemy models, the per-platform metadata services, and the audio extraction service. `POST /sounds/analyze` routes a pasted link to the service that owns its host and stores the result under `source_platform` (`tiktok` or `youtube`). Authentication state is held in a SameSite, HttpOnly cookie, with JWT claims expiring after the configured duration. Extracted MP3s live outside the database in `AUDIO_CACHE_DIR` and are served by `GET /sounds/{id}/stream`.
 
 ## Requirements
 
@@ -136,18 +136,19 @@ cd backend && pytest
 cd frontend && npm run typecheck && npm run build
 ```
 
-The backend tests use an isolated SQLite database, stub the external TikTok response, and stub audio extraction so no media is downloaded. Extraction is disabled and the cache directory is redirected to a temporary path for every test. The production schema and Compose stack use MySQL.
+The backend tests use an isolated SQLite database, stub the external oEmbed responses, and stub audio extraction so no media is downloaded. Extraction is disabled and the cache directory is redirected to a temporary path for every test. The production schema and Compose stack use MySQL.
 
 ## Security and integration limits
 
 - Passwords use Argon2; plaintext passwords are never stored.
 - JWTs are held in an HttpOnly, SameSite=Lax cookie; production cookies require HTTPS.
-- SQLAlchemy binds values through prepared statements; URL lookup accepts only HTTPS TikTok hosts.
+- SQLAlchemy binds values through prepared statements; URL lookup accepts only HTTPS TikTok and YouTube hosts.
+- Cached audio filenames are namespaced per platform (`youtube-<id>.mp3`; TikTok keeps its original bare ids), so ids from different sites cannot collide.
 - Sound analysis, audio preparation, and streaming are rate-limited per source IP. Keep CORS restricted to the frontend origin.
 - The stream endpoint requires authentication, and cache filenames come from a validated video id (`[A-Za-z0-9_-]{4,80}`) so requests cannot traverse outside `AUDIO_CACHE_DIR`.
 - Extraction runs at most `MAX_CONCURRENT_EXTRACTIONS` at a time, with a per-request timeout and a size cap, so one long video cannot exhaust the worker.
-- **The server downloads and stores audio from TikTok.** This breaches TikTok's Terms of Service, and the audio is normally third-party copyrighted music. Keep the instance private, do not publish or redistribute cached files, and prune `AUDIO_CACHE_DIR`. Set `AUDIO_EXTRACTION_ENABLED=false` to stop downloading.
-- TikTok actively blocks automated access. Extraction will fail for private, removed, age-restricted, or bot-gated videos, and it can break without warning when TikTok changes its site. The local-file import path stays available as a fallback.
+- **The server downloads and stores audio from TikTok and YouTube.** This breaches both platforms' Terms of Service, and the audio is normally third-party copyrighted music. Keep the instance private, do not publish or redistribute cached files, and prune `AUDIO_CACHE_DIR`. Set `AUDIO_EXTRACTION_ENABLED=false` to stop downloading.
+- Both platforms actively block automated access. Extraction will fail for private, removed, age-restricted, region-locked, or bot-gated videos (YouTube often gates datacenter IPs behind a sign-in check), and it can break without warning when either site changes. The local-file import path stays available as a fallback.
 - `yt-dlp` needs periodic upgrades to keep working: `pip install -U yt-dlp` (or rebuild the backend image).
 
 ## Project layout
@@ -162,7 +163,7 @@ backend/
   app/models/           SQLAlchemy models
   app/routers/          REST endpoints
   app/schemas/          Pydantic request and response types
-  app/services/         TikTok metadata integration and audio extraction
+  app/services/         TikTok and YouTube metadata integration, audio extraction
   alembic/              Database migration environment and revisions
   tests/                API and service tests
 docker-compose.yml      MySQL, Redis, backend, and frontend services

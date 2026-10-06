@@ -15,12 +15,17 @@ from app.schemas.sound import AnalyzeRequest, SoundPage, SoundRead
 from app.services import audio_service
 from app.services.audio_service import AudioExtractionError, ExtractedAudio
 from app.services.tiktok_service import TikTokService
+from app.services.youtube_service import YouTubeService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sounds", tags=["sounds"])
 limiter = Limiter(key_func=get_remote_address)
 tiktok_service = TikTokService()
+youtube_service = YouTubeService()
+# Checked in order; each service only claims links on its own hosts.
+SOURCE_SERVICES = (("tiktok", tiktok_service), ("youtube", youtube_service))
+UNSUPPORTED_URL_ERROR = {"code": "UNSUPPORTED_URL", "message": "Enter a public TikTok or YouTube video URL."}
 
 METADATA_FIELDS = ("title", "creator_name", "creator_username", "thumbnail_url", "duration_seconds", "playback_url", "is_playable")
 
@@ -41,6 +46,14 @@ def _apply_audio(db: Session, sound: Sound, extracted: ExtractedAudio) -> None:
     db.refresh(sound)
 
 
+def _route(source_url: str) -> tuple[str, TikTokService | YouTubeService]:
+    """Pick the metadata service that owns this link's host."""
+    for platform, service in SOURCE_SERVICES:
+        if service.matches(source_url):
+            return platform, service
+    raise HTTPException(status_code=422, detail=UNSUPPORTED_URL_ERROR)
+
+
 def _http_error(error: AudioExtractionError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message})
 
@@ -53,7 +66,7 @@ def _load_sound(db: Session, sound_id: int) -> Sound:
 
 
 def _require_key(sound: Sound) -> str:
-    key = audio_service.normalize_key(sound.external_id)
+    key = audio_service.platform_key(sound.source_platform, sound.external_id)
     if not key:
         raise HTTPException(status_code=422, detail={"code": "AUDIO_UNAVAILABLE", "message": "This sound has no video identifier to fetch audio for."})
     return key
@@ -61,11 +74,11 @@ def _require_key(sound: Sound) -> str:
 
 async def _extract_or_none(db: Session, sound: Sound) -> bool:
     """Best-effort audio preparation used while analyzing a link."""
-    key = audio_service.normalize_key(sound.external_id)
+    key = audio_service.platform_key(sound.source_platform, sound.external_id)
     if not key:
         return False
     try:
-        extracted = await audio_service.ensure_audio(sound.source_url, key)
+        extracted = await audio_service.ensure_audio(sound.source_url, key, sound.source_platform)
     except AudioExtractionError as error:
         logger.info("Audio unavailable for sound %s (%s): %s", sound.id, error.code, error.message)
         return False
@@ -76,13 +89,14 @@ async def _extract_or_none(db: Session, sound: Sound) -> bool:
 @router.post("/analyze", response_model=SoundRead)
 @limiter.limit("5/minute")
 async def analyze(request: Request, payload: AnalyzeRequest, db: Session = Depends(get_db)) -> Sound:
-    source_url = tiktok_service.validate_url(str(payload.url))
-    metadata = await tiktok_service.analyze(source_url)
+    source_url = str(payload.url)
+    platform, service = _route(source_url)
+    metadata = await service.analyze(service.validate_url(source_url))
     sound = None
     if metadata.external_id:
-        sound = db.scalar(select(Sound).where(Sound.source_platform == "tiktok", Sound.external_id == metadata.external_id))
+        sound = db.scalar(select(Sound).where(Sound.source_platform == platform, Sound.external_id == metadata.external_id))
     if sound is None:
-        sound = Sound(source_platform="tiktok", source_url=metadata.source_url, external_id=metadata.external_id)
+        sound = Sound(source_platform=platform, source_url=metadata.source_url, external_id=metadata.external_id)
     for field in METADATA_FIELDS:
         value = getattr(metadata, field)
         if field == "duration_seconds" and value is None:
@@ -103,7 +117,7 @@ async def prepare_audio(request: Request, sound_id: int, db: Session = Depends(g
     sound = _load_sound(db, sound_id)
     key = _require_key(sound)
     try:
-        extracted = await audio_service.ensure_audio(sound.source_url, key)
+        extracted = await audio_service.ensure_audio(sound.source_url, key, sound.source_platform)
     except AudioExtractionError as error:
         raise _http_error(error) from None
     _apply_audio(db, sound, extracted)
@@ -131,7 +145,7 @@ async def stream_audio(
     key = _require_key(sound)
     if not audio_service.has_cached_audio(key):
         try:
-            extracted = await audio_service.ensure_audio(sound.source_url, key)
+            extracted = await audio_service.ensure_audio(sound.source_url, key, sound.source_platform)
         except AudioExtractionError as error:
             raise _http_error(error) from None
         _apply_audio(db, sound, extracted)

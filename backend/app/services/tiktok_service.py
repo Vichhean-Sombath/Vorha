@@ -51,6 +51,15 @@ class TikTokService:
             await self.cache.aclose()
 
     @staticmethod
+    def matches(source_url: str) -> bool:
+        """Cheap host check used to route a pasted link to the right platform service."""
+        try:
+            parsed = urlparse(source_url)
+            return parsed.scheme == "https" and parsed.hostname in ALLOWED_HOSTS and parsed.port in (None, 443)
+        except ValueError:
+            return False
+
+    @staticmethod
     def validate_url(source_url: str) -> str:
         parsed = urlparse(source_url)
         try:
