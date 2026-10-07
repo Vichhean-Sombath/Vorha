@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { AudioLines, ArrowDownUp, ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Disc3, Heart, History, Home, Library, Link2, ListMusic, LoaderCircle, LogOut, MoreHorizontal, Music2, Pause, Play, Plus, RefreshCw, Repeat2, Search, Shuffle, SkipBack, SkipForward, Sparkles, Volume2, X } from "lucide-react";
 import type { HistoryItem, Playlist, Sound, User } from "@/types";
-import { authApi } from "@/lib/api/auth";
+import { authApi, type TelegramNonceResponse } from "@/lib/api/auth";
 import { favoritesApi } from "@/lib/api/favorites";
 import { historyApi } from "@/lib/api/history";
 import { playlistsApi } from "@/lib/api/playlists";
@@ -31,7 +31,28 @@ declare global {
 }
 
 let telegramLoginScript: Promise<TelegramLoginApi> | null = null;
-let telegramNonceRequest: Promise<{ client_id: string; bot_id: string; nonce: string }> | null = null;
+let telegramNonceRequest: Promise<TelegramNonceResponse> | null = null;
+let telegramBotIdForPopup: string | null = null;
+let telegramPopupHookInstalled = false;
+
+function installTelegramPopupBotIdHook() {
+  if (telegramPopupHookInstalled) return;
+  const originalOpen = window.open;
+  window.open = ((url?: string | URL, target?: string, features?: string) => {
+    let popupUrl = url;
+    if (url && telegramBotIdForPopup) {
+      try {
+        const parsedUrl = new URL(url.toString(), window.location.href);
+        if (parsedUrl.origin === "https://oauth.telegram.org" && parsedUrl.pathname === "/auth") {
+          parsedUrl.searchParams.set("bot_id", telegramBotIdForPopup);
+          popupUrl = parsedUrl.toString();
+        }
+      } catch { /* Pass through URLs the Telegram library generated as-is. */ }
+    }
+    return originalOpen.call(window, popupUrl, target, features);
+  }) as typeof window.open;
+  telegramPopupHookInstalled = true;
+}
 
 function getTelegramNonce() {
   if (!telegramNonceRequest) {
@@ -41,6 +62,7 @@ function getTelegramNonce() {
 }
 
 function loadTelegramLoginApi(): Promise<TelegramLoginApi> {
+  installTelegramPopupBotIdHook();
   if (window.Telegram?.Login) return Promise.resolve(window.Telegram.Login);
   if (!telegramLoginScript) {
     telegramLoginScript = new Promise((resolve, reject) => {
@@ -110,18 +132,22 @@ function AuthDialog({ mode, onClose, onSuccess }: { mode: AuthMode; onClose: () 
   const [username, setUsername] = useState("");
   const [telegramConfig, setTelegramConfig] = useState<{ client_id: string; bot_id: string; nonce: string } | null>(null);
   const [telegramBusy, setTelegramBusy] = useState(false);
+  const [telegramUnavailable, setTelegramUnavailable] = useState(false);
 
   useEffect(() => {
     let active = true;
     void Promise.all([getTelegramNonce(), loadTelegramLoginApi()])
-      .then(([config]) => { if (active) setTelegramConfig(config); })
-      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : "Telegram sign-in is unavailable."); });
+      .then(([config]) => { if (active) { telegramBotIdForPopup = config.bot_id; setTelegramConfig(config); setTelegramUnavailable(false); } })
+      .catch((cause) => { if (active) { setTelegramUnavailable(true); setError(cause instanceof Error ? cause.message : "Telegram sign-in is unavailable."); } });
     return () => { active = false; };
   }, []);
 
   function refreshTelegramNonce() {
     setTelegramConfig(null);
-    void getTelegramNonce().then(setTelegramConfig).catch((cause) => setError(cause instanceof Error ? cause.message : "Telegram sign-in is unavailable."));
+    setTelegramUnavailable(false);
+    void getTelegramNonce()
+      .then((config) => { telegramBotIdForPopup = config.bot_id; setTelegramConfig(config); setTelegramUnavailable(false); })
+      .catch((cause) => { setTelegramUnavailable(true); setError(cause instanceof Error ? cause.message : "Telegram sign-in is unavailable."); });
   }
 
   function startTelegramLogin() {
@@ -129,6 +155,7 @@ function AuthDialog({ mode, onClose, onSuccess }: { mode: AuthMode; onClose: () 
     if (!telegram || !telegramConfig || telegramBusy) return;
     setError("");
     setTelegramBusy(true);
+    telegramBotIdForPopup = telegramConfig.bot_id;
     try {
       telegram.auth({ client_id: Number(telegramConfig.client_id), bot_id: Number(telegramConfig.bot_id), scope: ["profile"], nonce: telegramConfig.nonce }, (result) => {
         if (!result.id_token) {
@@ -177,8 +204,8 @@ function AuthDialog({ mode, onClose, onSuccess }: { mode: AuthMode; onClose: () 
       </form>
       <div className="auth-divider"><span>or</span></div>
       <button className="telegram-login" type="button" onClick={startTelegramLogin} disabled={!telegramConfig || telegramBusy}>
-        {telegramBusy || !telegramConfig ? <LoaderCircle className="spin" size={16} /> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 4.6 18.2 20c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L5.6 13.5.7 12c-1.1-.3-1.1-1 .2-1.5L20 3c.9-.3 1.7.2 1.4 1.6Z" /></svg>}
-        {telegramBusy ? "Waiting for Telegram…" : telegramConfig ? "Continue with Telegram" : "Preparing Telegram…"}
+        {telegramBusy || (!telegramConfig && !telegramUnavailable) ? <LoaderCircle className="spin" size={16} /> : telegramConfig ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 4.6 18.2 20c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L5.6 13.5.7 12c-1.1-.3-1.1-1 .2-1.5L20 3c.9-.3 1.7.2 1.4 1.6Z" /></svg> : null}
+        {telegramBusy ? "Waiting for Telegram…" : telegramConfig ? "Continue with Telegram" : telegramUnavailable ? "Telegram unavailable" : "Preparing Telegram…"}
       </button>
       <p className="auth-footer">{currentMode === "register" ? "Already have an account?" : "New to Vorha?"} <button onClick={() => { setError(""); setCurrentMode(currentMode === "register" ? "login" : "register"); }}>{currentMode === "register" ? "Sign in" : "Create an account"}</button></p>
     </div>

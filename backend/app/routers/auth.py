@@ -69,8 +69,18 @@ def logout(response: Response) -> dict[str, bool]:
 
 @router.get("/telegram/nonce")
 def telegram_login_nonce(response: Response) -> dict[str, str]:
-    if not settings.telegram_client_id:
-        raise HTTPException(status_code=503, detail={"code": "TELEGRAM_LOGIN_NOT_CONFIGURED", "message": "Telegram login is not configured."})
+    if (
+        not settings.telegram_client_id
+        or not settings.telegram_bot_id
+        or not settings.telegram_bot_id.isdigit()
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TELEGRAM_LOGIN_NOT_CONFIGURED",
+                "message": "Telegram login needs TELEGRAM_CLIENT_ID and a numeric TELEGRAM_BOT_ID. Set TELEGRAM_BOT_ID to the ID of the bot configured for Telegram Login.",
+            },
+        )
     nonce = secrets.token_urlsafe(32)
     response.set_cookie(
         TELEGRAM_NONCE_COOKIE,
@@ -81,7 +91,7 @@ def telegram_login_nonce(response: Response) -> dict[str, str]:
         samesite="lax",
         path="/api/v1/auth/telegram",
     )
-    return {"client_id": settings.telegram_client_id, "bot_id": settings.telegram_bot_id or settings.telegram_client_id, "nonce": nonce}
+    return {"client_id": settings.telegram_client_id, "bot_id": settings.telegram_bot_id, "nonce": nonce}
 
 
 @router.post("/telegram/login", response_model=AuthResponse)
